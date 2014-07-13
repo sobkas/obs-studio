@@ -10,7 +10,7 @@ if(LIBSWRESAMPLE_INCLUDE_DIRS AND LIBSWRESAMPLE_LIBRARIES)
 else()
 	find_package(PkgConfig QUIET)
 	if (PKG_CONFIG_FOUND)
-		pkg_check_modules(_SWRESAMPLE QUIET libswresample)
+		pkg_check_modules(_SWRESAMPLE QUIET libavresample)
 	endif()
 
 	if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -28,7 +28,7 @@ else()
 		PATH_SUFFIXES ffmpeg libav)
 
 	find_library(SWRESAMPLE_LIB
-		NAMES swresample
+		NAMES swresample avresample
 		HINTS ${FFMPEG_INCLUDE_DIR}/../lib ${FFMPEG_INCLUDE_DIR}/lib${_lib_suffix} ${_SWRESAMPLE_LIBRARY_DIRS} /usr/lib /usr/local/lib /opt/local/lib /sw/lib)
 
 	set(LIBSWRESAMPLE_INCLUDE_DIRS ${FFMPEG_INCLUDE_DIR} CACHE PATH "Libswresample include dir")

@@ -19,24 +19,21 @@
 #include "audio-resampler.h"
 #include "audio-io.h"
 #include <libavutil/avutil.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/opt.h>
 #include <libavformat/avformat.h>
-#include <libswresample/swresample.h>
+#include <libavresample/avresample.h>
 
 struct audio_resampler {
-	struct SwrContext   *context;
+        AVAudioResampleContext   *context;
 	bool                opened;
-
-	uint32_t            input_freq;
-	uint64_t            input_layout;
-	enum AVSampleFormat input_format;
-
 	uint8_t             *output_buffer[MAX_AV_PLANES];
-	uint64_t            output_layout;
-	enum AVSampleFormat output_format;
-	int                 output_size;
-	uint32_t            output_ch;
-	uint32_t            output_freq;
-	uint32_t            output_planes;
+        uint32_t            output_planes;
+        uint32_t            input_freq;
+        uint32_t            output_freq;
+        enum AVSampleFormat output_format;
+        int                 output_size;
+        uint32_t            output_ch;
 };
 
 static inline enum AVSampleFormat convert_audio_format(enum audio_format format)
@@ -77,39 +74,47 @@ static inline uint64_t convert_speaker_layout(enum speaker_layout layout)
 	return 0;
 }
 
+static char *const get_error_text(const int error)
+{
+       static char error_buffer[255];
+       av_strerror(error, error_buffer, sizeof(error_buffer));
+       return error_buffer;
+}
+
 audio_resampler_t audio_resampler_create(const struct resample_info *dst,
 		const struct resample_info *src)
 {
 	struct audio_resampler *rs = bzalloc(sizeof(struct audio_resampler));
+        AVAudioResampleContext *avr = avresample_alloc_context();
+        rs->context = avr;
 	int errcode;
 
-	rs->opened        = false;
-	rs->input_freq    = src->samples_per_sec;
-	rs->input_layout  = convert_speaker_layout(src->speakers);
-	rs->input_format  = convert_audio_format(src->format);
-	rs->output_size   = 0;
-	rs->output_ch     = get_audio_channels(dst->speakers);
-	rs->output_freq   = dst->samples_per_sec;
-	rs->output_layout = convert_speaker_layout(dst->speakers);
-	rs->output_format = convert_audio_format(dst->format);
-	rs->output_planes = is_audio_planar(dst->format) ? rs->output_ch : 1;
+        errcode = av_opt_set_int(avr, "in_channel_layout",  av_get_channel_layout_nb_channels(src->speakers), 0);
+        blog(LOG_ERROR, "code %d", errcode);
+        errcode = av_opt_set_int(avr, "out_channel_layout", av_get_channel_layout_nb_channels(dst->speakers), 0);
+        blog(LOG_ERROR, "code %d", errcode);
+        errcode = av_opt_set_int(avr, "in_sample_rate",     src->samples_per_sec, 0);
+        blog(LOG_ERROR, "code %d", errcode);
+        errcode = av_opt_set_int(avr, "out_sample_rate",    dst->samples_per_sec, 0);
+        blog(LOG_ERROR, "code %d", errcode);
+        errcode = av_opt_set_int(avr, "in_sample_fmt",      convert_audio_format(src->format), 0);
+        blog(LOG_ERROR, "code %d", errcode);
+        errcode = av_opt_set_int(avr, "out_sample_fmt",     convert_audio_format(dst->format), 0);
+        blog(LOG_ERROR, "code %d", errcode);
 
-	rs->context = swr_alloc_set_opts(NULL,
-		rs->output_layout, rs->output_format, dst->samples_per_sec,
-		rs->input_layout,  rs->input_format,  src->samples_per_sec,
-		0, NULL);
-
-	if (!rs->context) {
-		blog(LOG_ERROR, "swr_alloc_set_opts failed");
-		audio_resampler_destroy(rs);
-		return NULL;
-	}
-
-	errcode = swr_init(rs->context);
+        rs->input_freq    = src->samples_per_sec;
+        rs->output_freq   = dst->samples_per_sec;
+        rs->output_size   = 0;
+        rs->output_format = convert_audio_format(dst->format);
+        rs->output_ch     = get_audio_channels(dst->speakers);
+        
+	errcode = avresample_open(avr);
 	if (errcode != 0) {
-		blog(LOG_ERROR, "avresample_open failed: error code %d",
-				errcode);
+		blog(LOG_ERROR, "avresample_open failed: error %s",
+                     get_error_text(errcode));
 		audio_resampler_destroy(rs);
+                avresample_free(&avr);
+                avr = NULL;
 		return NULL;
 	}
 
@@ -120,7 +125,7 @@ void audio_resampler_destroy(audio_resampler_t rs)
 {
 	if (rs) {
 		if (rs->context)
-			swr_free(&rs->context);
+			avresample_close(&rs->context);
 		if (rs->output_buffer)
 			av_freep(&rs->output_buffer[0]);
 
@@ -133,32 +138,25 @@ bool audio_resampler_resample(audio_resampler_t rs,
 		 const uint8_t *const input[], uint32_t in_frames)
 {
 	if (!rs) return false;
-
-	struct SwrContext *context = rs->context;
+        
+        AVAudioResampleContext *context = rs->context;
 	int ret;
-
-	int64_t delay = swr_get_delay(context, rs->input_freq);
-	int estimated = (int)av_rescale_rnd(
-			delay + (int64_t)in_frames,
-			(int64_t)rs->output_freq, (int64_t)rs->input_freq,
-			AV_ROUND_UP);
-
-	*ts_offset = (uint64_t)swr_get_delay(context, 1000000000);
-
+        int out_linesize;
+	int estimated = avresample_available(rs->context) + (int)av_rescale_rnd(avresample_get_delay(rs->context) + (int64_t)in_frames, (int64_t)rs->output_freq, (int64_t)rs->input_freq, AV_ROUND_UP);
+	*ts_offset = (uint64_t)avresample_get_delay(context);
+        //*ts_offset = 0;
 	/* resize the buffer if bigger */
 	if (estimated > rs->output_size) {
 		if (rs->output_buffer[0])
 			av_freep(&rs->output_buffer[0]);
 
-		av_samples_alloc(rs->output_buffer, NULL, rs->output_ch,
+		av_samples_alloc(rs->output_buffer, out_linesize, rs->output_ch,
 				estimated, rs->output_format, 0);
 
 		rs->output_size = estimated;
 	}
 
-	ret = swr_convert(context,
-			rs->output_buffer, rs->output_size,
-			(const uint8_t**)input, in_frames);
+	ret = avresample_convert(context, rs->output_buffer, out_linesize, rs->output_size, (const uint8_t**)input, out_linesize, in_frames);
 
 	if (ret < 0) {
 		blog(LOG_ERROR, "swr_convert failed: %d", ret);

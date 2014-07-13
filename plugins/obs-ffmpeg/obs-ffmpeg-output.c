@@ -23,6 +23,7 @@
 #include <util/platform.h>
 
 #include <libavutil/opt.h>
+#include <libavutil/avstring.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 
@@ -90,15 +91,11 @@ static bool new_stream(struct ffmpeg_data *data, AVStream **stream,
 {
 	*codec = avcodec_find_encoder(id);
 	if (!*codec) {
-		blog(LOG_WARNING, "Couldn't find encoder '%s'",
-				avcodec_get_name(id));
 		return false;
 	}
 
 	*stream = avformat_new_stream(data->output, *codec);
 	if (!*stream) {
-		blog(LOG_WARNING, "Couldn't create stream for encoder '%s'",
-				avcodec_get_name(id));
 		return false;
 	}
 
@@ -118,8 +115,6 @@ static bool open_video_codec(struct ffmpeg_data *data)
 
 	ret = avcodec_open2(context, data->vcodec, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to open video codec: %s",
-				av_err2str(ret));
 		return false;
 	}
 
@@ -136,8 +131,6 @@ static bool open_video_codec(struct ffmpeg_data *data)
 	ret = avpicture_alloc(&data->dst_picture, context->pix_fmt,
 			context->width, context->height);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to allocate dst_picture: %s",
-				av_err2str(ret));
 		return false;
 	}
 
@@ -220,8 +213,6 @@ static bool open_audio_codec(struct ffmpeg_data *data)
 
 	ret = avcodec_open2(context, data->acodec, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to open audio codec: %s",
-				av_err2str(ret));
 		return false;
 	}
 
@@ -230,8 +221,6 @@ static bool open_audio_codec(struct ffmpeg_data *data)
 	ret = av_samples_alloc(data->samples, NULL, context->channels,
 			data->frame_size, context->sample_fmt, 0);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to create audio buffer: %s",
-		                av_err2str(ret));
 		return false;
 	}
 
@@ -294,16 +283,12 @@ static inline bool open_output_file(struct ffmpeg_data *data)
 		ret = avio_open(&data->output->pb, data->filename_test,
 				AVIO_FLAG_WRITE);
 		if (ret < 0) {
-			blog(LOG_WARNING, "Couldn't open file '%s', %s",
-					data->filename_test, av_err2str(ret));
 			return false;
 		}
 	}
 
 	ret = avformat_write_header(data->output, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Error opening file '%s': %s",
-				data->filename_test, av_err2str(ret));
 		return false;
 	}
 
@@ -366,8 +351,10 @@ static bool ffmpeg_data_init(struct ffmpeg_data *data, const char *filename,
 	is_rtmp = (astrcmp_n(filename, "rtmp://", 7) == 0);
 
 	/* TODO: settings */
-	avformat_alloc_output_context2(&data->output, NULL,
-			is_rtmp ? "flv" : NULL, data->filename_test);
+	data->output = avformat_alloc_context();
+        av_strlcpy(data->output->filename, data->filename_test, sizeof(data->output->filename));
+        data->output->oformat = av_guess_format(is_rtmp ? "flv" : NULL, data->filename_test, NULL);
+
 	if (is_rtmp) {
 		data->output->oformat->video_codec = AV_CODEC_ID_H264;
 		data->output->oformat->audio_codec = AV_CODEC_ID_AAC;
@@ -517,8 +504,6 @@ static void receive_video(void *param, struct video_data *frame)
 		ret = avcodec_encode_video2(context, &packet, data->vframe,
 				&got_packet);
 		if (ret < 0) {
-			blog(LOG_WARNING, "receive_video: Error encoding "
-			                  "video: %s", av_err2str(ret));
 			return;
 		}
 
@@ -540,10 +525,7 @@ static void receive_video(void *param, struct video_data *frame)
 		}
 	}
 
-	if (ret != 0) {
-		blog(LOG_WARNING, "receive_video: Error writing video: %s",
-				av_err2str(ret));
-	}
+
 
 	data->total_frames++;
 }
@@ -566,8 +548,6 @@ static void encode_audio(struct ffmpeg_output *output,
 			context->sample_fmt, data->samples[0],
 			(int)total_size, 1);
 	if (ret < 0) {
-		blog(LOG_WARNING, "encode_audio: avcodec_fill_audio_frame "
-		                  "failed: %s", av_err2str(ret));
 		return;
 	}
 
@@ -576,8 +556,6 @@ static void encode_audio(struct ffmpeg_output *output,
 	ret = avcodec_encode_audio2(context, &packet, data->aframe,
 			&got_packet);
 	if (ret < 0) {
-		blog(LOG_WARNING, "encode_audio: Error encoding audio: %s",
-				av_err2str(ret));
 		return;
 	}
 
@@ -676,8 +654,6 @@ static bool process_packet(struct ffmpeg_output *output)
 	ret = av_interleaved_write_frame(output->ff_data.output, &packet);
 	if (ret < 0) {
 		av_free_packet(&packet);
-		blog(LOG_WARNING, "receive_audio: Error writing packet: %s",
-				av_err2str(ret));
 		return false;
 	}
 

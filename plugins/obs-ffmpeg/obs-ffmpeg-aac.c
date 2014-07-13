@@ -87,8 +87,6 @@ static bool initialize_codec(struct aac_encoder *enc)
 
 	ret = avcodec_open2(enc->context, enc->aac, NULL);
 	if (ret < 0) {
-		aac_warn("initialize_codec", "Failed to open AAC codec: %s",
-				av_err2str(ret));
 		return false;
 	}
 
@@ -101,8 +99,6 @@ static bool initialize_codec(struct aac_encoder *enc)
 	ret = av_samples_alloc(enc->samples, NULL, enc->context->channels,
 			enc->frame_size, enc->context->sample_fmt, 0);
 	if (ret < 0) {
-		aac_warn("initialize_codec", "Failed to create audio buffer: "
-		                             "%s", av_err2str(ret));
 		return false;
 	}
 
@@ -191,8 +187,6 @@ static bool do_aac_encode(struct aac_encoder *enc,
 			enc->context->sample_fmt, enc->samples[0],
 			enc->frame_size_bytes * enc->context->channels, 1);
 	if (ret < 0) {
-		aac_warn("do_aac_encode", "avcodec_fill_audio_frame failed: %s",
-				av_err2str(ret));
 		return false;
 	}
 
@@ -201,8 +195,6 @@ static bool do_aac_encode(struct aac_encoder *enc,
 	ret = avcodec_encode_audio2(enc->context, &avpacket, enc->aframe,
 			&got_packet);
 	if (ret < 0) {
-		aac_warn("do_aac_encode", "avcodec_encode_audio2 failed: %s",
-				av_err2str(ret));
 		return false;
 	}
 

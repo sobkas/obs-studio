@@ -23,8 +23,6 @@ static bool ffmpeg_image_open_decoder_context(struct ffmpeg_image *info)
 	int ret = av_find_best_stream(info->fmt_ctx, AVMEDIA_TYPE_VIDEO,
 			-1, 1, NULL, 0);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Couldn't find video stream in file '%s': %s",
-				info->file, av_err2str(ret));
 		return false;
 	}
 
@@ -41,8 +39,6 @@ static bool ffmpeg_image_open_decoder_context(struct ffmpeg_image *info)
 
 	ret = avcodec_open2(info->decoder_ctx, info->decoder, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to open video codec for file '%s': "
-		                  "%s", info->file, av_err2str(ret));
 		return false;
 	}
 
@@ -65,15 +61,11 @@ static bool ffmpeg_image_init(struct ffmpeg_image *info, const char *file)
 
 	ret = avformat_open_input(&info->fmt_ctx, file, NULL, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to open file '%s': %s",
-				info->file, av_err2str(ret));
 		return false;
 	}
 
 	ret = avformat_find_stream_info(info->fmt_ctx, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Could not find stream info for file '%s':"
-		                  " %s", info->file, av_err2str(ret));
 		goto fail;
 	}
 
@@ -97,8 +89,7 @@ static bool ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 	int               ret      = 0;
 
 	if (info->format == AV_PIX_FMT_RGBA ||
-	    info->format == AV_PIX_FMT_BGRA ||
-	    info->format == AV_PIX_FMT_BGR0) {
+	    info->format == AV_PIX_FMT_BGRA) {
 
 		if (linesize != frame->linesize[0]) {
 			int min_line = linesize < frame->linesize[0] ?
@@ -127,8 +118,6 @@ static bool ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 		sws_freeContext(sws_ctx);
 
 		if (ret < 0) {
-			blog(LOG_WARNING, "sws_scale failed for '%s': %s",
-					info->file, av_err2str(ret));
 			return false;
 		}
 
@@ -155,8 +144,6 @@ static bool ffmpeg_image_decode(struct ffmpeg_image *info, uint8_t *out,
 
 	ret = av_read_frame(info->fmt_ctx, &packet);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to read image frame from '%s': %s",
-				info->file, av_err2str(ret));
 		goto fail;
 	}
 
@@ -164,8 +151,6 @@ static bool ffmpeg_image_decode(struct ffmpeg_image *info, uint8_t *out,
 		ret = avcodec_decode_video2(info->decoder_ctx, frame,
 				&got_frame, &packet);
 		if (ret < 0) {
-			blog(LOG_WARNING, "Failed to decode frame for '%s': %s",
-					info->file, av_err2str(ret));
 			goto fail;
 		}
 	}
@@ -192,7 +177,6 @@ static inline enum gs_color_format convert_format(enum AVPixelFormat format)
 	switch ((int)format) {
 	case AV_PIX_FMT_RGBA: return GS_RGBA;
 	case AV_PIX_FMT_BGRA: return GS_BGRA;
-	case AV_PIX_FMT_BGR0: return GS_BGRX;
 	}
 
 	return GS_BGRX;
